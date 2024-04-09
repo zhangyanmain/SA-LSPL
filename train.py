@@ -11,11 +11,11 @@ import pickle
 from collections import deque, Counter
 
 NYCdata = pickle.load(open('../data/NYC/FourSquareNYC.pk', 'rb'), encoding='iso-8859-1')
-poi_dis_amt_sig = pickle.load(open('../data/NYC/dis_nyc_sig.pkl', 'rb'), encoding='iso-8859-1')
-avg_time_amt_sig = pickle.load(open('../data/NYC/avg_time_amt_sig.pk', 'rb'), encoding='iso-8859-1')
+poi_dis_mat_sig = pickle.load(open('../data/NYC/dis_nyc_sig.pkl', 'rb'), encoding='iso-8859-1')
+avg_time_mat_sig = pickle.load(open('../data/NYC/avg_time_mat_sig.pk', 'rb'), encoding='iso-8859-1')
 cat_tran_sig = pickle.load(open('../data/NYC/cat_trans.pkl', 'rb'),
                            encoding='iso-8859-1')
-user_sim_amt = pickle.load(open('../data/NYC/user_sim.pk', 'rb'), encoding='iso-8859-1')
+user_sim_mat = pickle.load(open('../data/NYC/user_sim.pk', 'rb'), encoding='iso-8859-1')
 data_neural = NYCdata['data_neural']
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
@@ -88,15 +88,15 @@ def generate_input_long_his(data_neural, mode, candidate=None):
     return data_train, train_idx
 
 
-def aux(hidden, tgt_emb):
+def auxiliary(hidden, tgt_emb):
     seq_len = hidden.size()[0]
     loss_list = []
     for i in range(seq_len):
         res = hidden[i].dot(tgt_emb[i])
         res = F.sigmoid(res)
         loss_list.append(torch.log(1 - res + 1e-5) + torch.log(res + 1e-5))
-    aux_loss = - sum(loss_list) / seq_len
-    return aux_loss
+    auxiliary_loss = - sum(loss_list) / seq_len
+    return auxiliary_loss
 
 
 def generate_detailed_bt_data(one_train_bt):
@@ -198,7 +198,7 @@ def get_hint(tgt, scores, users_visited):
     return hint, count
 
 
-def aux(hidden, tgt_emb):
+def auxiliary(hidden, tgt_emb):
     bt_size = hidden.size(0)
     seq_len = hidden.size(1)
     loss_list = []
@@ -209,8 +209,8 @@ def aux(hidden, tgt_emb):
             res = torch.sigmoid(res)
             bt_loss += torch.log(1 - res + 1e-5) + torch.log(res + 1e-5)
         loss_list.append(bt_loss / seq_len)
-    aux_loss = -sum(loss_list) / bt_size
-    return aux_loss
+    auxiliary_loss = -sum(loss_list) / bt_size
+    return auxiliary_loss
 
 
 class ContrastiveLoss(torch.nn.Module):
@@ -249,9 +249,9 @@ def minibt(*tensors, **kwargs):
             yield tuple(x[i:i + bt_size] for x in tensors)
 
 
-def run_simple(data, run_idx, aux_rate, mode, lr, clip, model,
-               optimizer, criterion, mode2=None, time_sim_amt=None,
-               poi_dis_amt=None):
+def run_simple(data, run_idx, auxiliary_rate, mode, lr, clip, model,
+               optimizer, criterion, mode2=None, time_sim_mat=None,
+               poi_dis_mat=None):
     device = torch.device("cuda")
     run_queue = None
     if mode == 'train':
@@ -263,8 +263,8 @@ def run_simple(data, run_idx, aux_rate, mode, lr, clip, model,
     total_loss = []
     queue_len = len(run_queue)
     print(queue_len)
-    time_sim_amt = time_sim_amt
-    poi_dis_amt = poi_dis_amt
+    time_sim_mat = time_sim_mat
+    poi_dis_mat = poi_dis_mat
     users_acc = {}
     bt_size = 32
     for one_train_bt in minibt(run_queue, bt_size=bt_size):
@@ -287,15 +287,14 @@ def run_simple(data, run_idx, aux_rate, mode, lr, clip, model,
         mask_bt_ix_non_local = Variable(torch.FloatTensor(np.array(mask_bt_ix_non_local))).to(device)
         user_id_bt = Variable(torch.LongTensor(np.array(user_id_bt))).to(device)
         logp_seq, hidden_state, tgt_embed = model(user_id_bt, pd_seq_bt, seq_tgt_bt,
-                                                  mask_bt_ix_non_local, session_id_bt,seq_tim_bt,pd_seq_bt_time, pd_seq_bt_week,
-                                                  pd_seq_bt_cat, True, poi_dis_amt,time_sim_amt,seq_bt, seq_categories_bt, 
-                                                  poi_dis_amt_sig,avg_time_amt_sig,cat_tran_sig,user_sim_amt)
+                                                  mask_bt_ix_non_local, session_id_bt,seq_tim_bt,pd_seq_bt_time, pd_seq_bt_week,pd_seq_bt_cat, True, poi_dis_mat,
+                                                  time_sim_mat,seq_bt, seq_categories_bt, poi_dis_mat_sig,avg_time_mat_sig,cat_tran_sig,user_sim_mat)
         predictions_logp = logp_seq[:, :] * mask_bt_ix[:, :, None]
         actual_next_tokens = seq_tgt_bt[:, :]  # 32 10
         logp_next = torch.gather(predictions_logp, dim=2, index=actual_next_tokens[:, :, None])  # 32 10 1
         loss_poi = -logp_next.sum() / mask_bt_ix[:, :].sum()
-        aux_loss = aux(hidden_state, tgt_embed)
-        loss = loss_poi + aux_rate * aux_loss
+        auxiliary_loss = auxiliary(hidden_state, tgt_embed)
+        loss = loss_poi + auxiliary_rate * auxiliary_loss
         if mode == 'train':
             loss.backward()
             try:
